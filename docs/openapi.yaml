@@ -1,0 +1,1261 @@
+openapi: 3.0.3
+info:
+  title: AstroWave Ground Station API
+  version: 1.0.0
+  description: |
+    Backend contract for AstroWave. Every response uses the same envelope:
+
+    ```json
+    { "success": true, "message": "Data berhasil diambil", "data": {} }
+    ```
+
+    Set `NEXT_PUBLIC_DATA_MODE=api` and `NEXT_PUBLIC_API_BASE_URL` on the frontend
+    to point at this API. Mock mode in the Next.js app mirrors these schemas.
+
+    Paths marked **consumed** are already called by the frontend data layer.
+    Paths marked **planned** complete the remaining Mission Control modules.
+  contact:
+    name: AstroWave
+    url: http://localhost:3000
+
+servers:
+  - url: http://localhost:8080/api
+    description: Local backend (NEXT_PUBLIC_API_BASE_URL)
+  - url: http://localhost:3000/api
+    description: Next.js BFF (auth cookie proxy only)
+
+tags:
+  - name: Auth
+    description: Session and identity
+  - name: Station
+    description: Ground station profile and system settings
+  - name: Operations
+    description: Dashboard, catalog, orbits and pass prediction
+  - name: RF
+    description: Frequencies, antennas, SDR, spectrum and Doppler
+  - name: Data
+    description: Telemetry, recordings and observations
+
+security:
+  - bearerAuth: []
+
+paths:
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Authenticate operator
+      description: Consumed by the Next.js BFF `POST /api/auth/login`. Mock mode accepts any credentials.
+      security: []
+      operationId: login
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginRequest"
+            example:
+              email: john.doe@example.com
+              password: demo
+      responses:
+        "200":
+          description: Authenticated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginResponse"
+        "401":
+          $ref: "#/components/responses/ErrorEnvelope"
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: End session
+      description: Planned backend counterpart of Next.js `POST /api/auth/logout`.
+      operationId: logout
+      responses:
+        "200":
+          description: Logged out
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LogoutResponse"
+
+  /user/profile:
+    get:
+      tags: [Auth]
+      summary: Current operator profile
+      description: Consumed by `getProfile()`.
+      operationId: getProfile
+      responses:
+        "200":
+          description: Profile
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserResponse"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+
+  /station:
+    get:
+      tags: [Station]
+      summary: Ground station configuration
+      description: Planned. Settings page currently reads env; this endpoint should return the physical station.
+      operationId: getStation
+      responses:
+        "200":
+          description: Station
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroundStationResponse"
+    patch:
+      tags: [Station]
+      summary: Update station coordinates
+      operationId: updateStation
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/GroundStation"
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GroundStationResponse"
+
+  /dashboard:
+    get:
+      tags: [Operations]
+      summary: Mission control dashboard snapshot
+      description: Consumed by `getDashboard()`.
+      operationId: getDashboard
+      responses:
+        "200":
+          description: Dashboard payload
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardResponse"
+
+  /mission/preview:
+    get:
+      tags: [Operations]
+      summary: Public mission-control preview
+      description: Consumed by the marketing landing `getMissionPreview()`.
+      security: []
+      operationId: getMissionPreview
+      responses:
+        "200":
+          description: Preview cards
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MissionPreviewResponse"
+
+  /satellites:
+    get:
+      tags: [Operations]
+      summary: Satellite catalog
+      description: Consumed by `listSatellites()`.
+      operationId: listSatellites
+      parameters:
+        - $ref: "#/components/parameters/CategoryQuery"
+        - $ref: "#/components/parameters/StatusQuery"
+      responses:
+        "200":
+          description: Catalog
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SatelliteListResponse"
+
+  /satellites/{id}:
+    get:
+      tags: [Operations]
+      summary: Satellite by id
+      description: Consumed by `getSatellite(id)`.
+      operationId: getSatellite
+      parameters:
+        - $ref: "#/components/parameters/SatelliteId"
+      responses:
+        "200":
+          description: Satellite with TLE
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SatelliteResponse"
+        "404":
+          $ref: "#/components/responses/ErrorEnvelope"
+
+  /orbital-tracking:
+    get:
+      tags: [Operations]
+      summary: Live orbital state for 3D/2D visualization
+      description: Planned. Orbital Tracking currently derives angles from the satellite list.
+      operationId: getOrbitalTracking
+      responses:
+        "200":
+          description: Orbiting objects
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OrbitalTrackingResponse"
+
+  /passes:
+    get:
+      tags: [Operations]
+      summary: Predicted passes
+      description: Consumed by `listPasses()`.
+      operationId: listPasses
+      parameters:
+        - name: satelliteId
+          in: query
+          schema:
+            type: string
+            example: iss
+        - name: from
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: to
+          in: query
+          schema:
+            type: string
+            format: date-time
+        - name: minElevationDeg
+          in: query
+          schema:
+            type: number
+            example: 10
+      responses:
+        "200":
+          description: Pass schedule
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PassListResponse"
+
+  /frequencies:
+    get:
+      tags: [RF]
+      summary: Downlink frequency plan
+      description: Consumed by `listFrequencies()`.
+      operationId: listFrequencies
+      responses:
+        "200":
+          description: Frequencies
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FrequencyListResponse"
+
+  /transmitters:
+    get:
+      tags: [RF]
+      summary: Spacecraft transmitters
+      description: Consumed by `listTransmitters()`.
+      operationId: listTransmitters
+      responses:
+        "200":
+          description: Transmitters
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TransmitterListResponse"
+
+  /antennas:
+    get:
+      tags: [RF]
+      summary: Antenna farm and rotator status
+      description: Planned. Antennas page currently reads `dashboard.antenna`.
+      operationId: listAntennas
+      responses:
+        "200":
+          description: Antennas
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AntennaListResponse"
+
+  /sdr/status:
+    get:
+      tags: [RF]
+      summary: SDR device status
+      description: Consumed by `getSdrStatus()`.
+      operationId: getSdrStatus
+      responses:
+        "200":
+          description: SDR telemetry
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SdrStatusResponse"
+
+  /sdr/config:
+    patch:
+      tags: [RF]
+      summary: Update SDR center frequency, gain and sample rate
+      description: Planned. Required when the SDR page becomes a real configuration surface.
+      operationId: updateSdrConfig
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SdrConfigRequest"
+      responses:
+        "200":
+          description: Updated SDR
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SdrStatusResponse"
+
+  /spectrum:
+    get:
+      tags: [RF]
+      summary: FFT bins and waterfall snapshot
+      description: Planned. Spectrum page currently uses `dashboard.spectrumBins`.
+      operationId: getSpectrum
+      parameters:
+        - name: bins
+          in: query
+          schema:
+            type: integer
+            default: 128
+            minimum: 32
+            maximum: 4096
+      responses:
+        "200":
+          description: Spectrum
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SpectrumResponse"
+
+  /signals:
+    get:
+      tags: [RF]
+      summary: RF signals currently above the horizon
+      description: Planned. Signals page currently uses `dashboard.visible`.
+      operationId: listSignals
+      responses:
+        "200":
+          description: Visible signals
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SignalListResponse"
+
+  /doppler:
+    get:
+      tags: [RF]
+      summary: Doppler time series for tracked objects
+      description: Planned. Doppler page currently synthesizes series from `dashboard.visible`.
+      operationId: getDoppler
+      parameters:
+        - name: satelliteId
+          in: query
+          schema:
+            type: string
+        - name: points
+          in: query
+          schema:
+            type: integer
+            default: 20
+      responses:
+        "200":
+          description: Doppler curves
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DopplerResponse"
+
+  /telemetry:
+    get:
+      tags: [Data]
+      summary: Decoded telemetry frames
+      description: Consumed by `listTelemetry()`.
+      operationId: listTelemetry
+      parameters:
+        - name: satellite
+          in: query
+          schema:
+            type: string
+            example: FUNcube-1
+      responses:
+        "200":
+          description: Frames
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TelemetryListResponse"
+
+  /recordings:
+    get:
+      tags: [Data]
+      summary: IQ / audio archives
+      description: Consumed by `listRecordings()`.
+      operationId: listRecordings
+      responses:
+        "200":
+          description: Recordings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingListResponse"
+
+  /recordings/{id}:
+    get:
+      tags: [Data]
+      summary: Recording metadata by id
+      description: Planned detail view.
+      operationId: getRecording
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: rec1
+      responses:
+        "200":
+          description: Recording
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RecordingResponse"
+        "404":
+          $ref: "#/components/responses/ErrorEnvelope"
+
+  /observations:
+    get:
+      tags: [Data]
+      summary: Observation history
+      description: Consumed by `listObservations()`.
+      operationId: listObservations
+      responses:
+        "200":
+          description: Observations
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObservationListResponse"
+
+  /observations/{id}:
+    get:
+      tags: [Data]
+      summary: Observation by id
+      description: Planned detail view.
+      operationId: getObservation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+            example: obs1
+      responses:
+        "200":
+          description: Observation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ObservationResponse"
+        "404":
+          $ref: "#/components/responses/ErrorEnvelope"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Token returned in `data.token` from `/auth/login`.
+
+  parameters:
+    SatelliteId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        example: iss
+    CategoryQuery:
+      name: category
+      in: query
+      schema:
+        type: string
+        enum: [crew, weather, amateur]
+    StatusQuery:
+      name: status
+      in: query
+      schema:
+        type: string
+        enum: [active, decayed, standby]
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid token
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+          example:
+            success: false
+            message: Unauthorized
+            data: null
+    ErrorEnvelope:
+      description: Envelope with success=false
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorEnvelope"
+
+  schemas:
+    ApiEnvelope:
+      type: object
+      required: [success, message, data]
+      properties:
+        success:
+          type: boolean
+          example: true
+        message:
+          type: string
+          example: Data berhasil diambil
+        data: {}
+
+    ErrorEnvelope:
+      type: object
+      required: [success, message, data]
+      properties:
+        success:
+          type: boolean
+          example: false
+        message:
+          type: string
+          example: Resource not found
+        data:
+          nullable: true
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+          example: john.doe@example.com
+        password:
+          type: string
+          format: password
+          example: demo
+
+    GroundStation:
+      type: object
+      required: [name, latitude, longitude, altitudeM]
+      properties:
+        name:
+          type: string
+          example: GS-ALPHA
+        latitude:
+          type: number
+          format: float
+          example: 40.4168
+        longitude:
+          type: number
+          format: float
+          example: -3.7038
+        altitudeM:
+          type: number
+          format: float
+          example: 667
+
+    User:
+      type: object
+      required: [id, name, email, groundStation]
+      properties:
+        id:
+          type: integer
+          example: 1
+        name:
+          type: string
+          example: John Doe
+        email:
+          type: string
+          format: email
+          example: john.doe@example.com
+        phone:
+          type: string
+          example: "081234567890"
+        groundStation:
+          $ref: "#/components/schemas/GroundStation"
+
+    AuthLoginData:
+      type: object
+      required: [token, user]
+      properties:
+        token:
+          type: string
+          example: mock-session-astrowave
+        user:
+          $ref: "#/components/schemas/User"
+
+    Satellite:
+      type: object
+      required:
+        [id, name, noradId, category, status, inclinationDeg, periodMin, tleLine1, tleLine2]
+      properties:
+        id:
+          type: string
+          example: iss
+        name:
+          type: string
+          example: ISS (ZARYA)
+        noradId:
+          type: integer
+          example: 25544
+        category:
+          type: string
+          example: crew
+        status:
+          type: string
+          enum: [active, decayed, standby]
+        inclinationDeg:
+          type: number
+          example: 51.64
+        periodMin:
+          type: number
+          example: 92.68
+        tleLine1:
+          type: string
+        tleLine2:
+          type: string
+
+    Pass:
+      type: object
+      required:
+        [id, satelliteId, satelliteName, aos, los, maxElevationDeg, durationSec, frequencyMhz]
+      properties:
+        id:
+          type: string
+          example: p1
+        satelliteId:
+          type: string
+          example: iss
+        satelliteName:
+          type: string
+          example: ISS (ZARYA)
+        aos:
+          type: string
+          format: date-time
+        los:
+          type: string
+          format: date-time
+        maxElevationDeg:
+          type: number
+          example: 62.4
+        durationSec:
+          type: integer
+          example: 780
+        frequencyMhz:
+          type: number
+          example: 145.825
+
+    VisibleSatellite:
+      type: object
+      required:
+        [satelliteId, name, azimuthDeg, elevationDeg, rangeKm, frequencyMhz, snrDb, dopplerHz]
+      properties:
+        satelliteId:
+          type: string
+          example: iss
+        name:
+          type: string
+          example: ISS (ZARYA)
+        azimuthDeg:
+          type: number
+          example: 142.3
+        elevationDeg:
+          type: number
+          example: 28.6
+        rangeKm:
+          type: number
+          example: 1240
+        frequencyMhz:
+          type: number
+          example: 145.825
+        snrDb:
+          type: number
+          example: 18.4
+        dopplerHz:
+          type: number
+          example: -2840
+
+    SdrStatus:
+      type: object
+      required: [connected, device, sampleRateHz, centerFreqMhz, gainDb, ppm, cpuPercent]
+      properties:
+        connected:
+          type: boolean
+          example: true
+        device:
+          type: string
+          example: RTL-SDR Blog V4
+        sampleRateHz:
+          type: integer
+          example: 2400000
+        centerFreqMhz:
+          type: number
+          example: 137.1
+        gainDb:
+          type: number
+          example: 36.4
+        ppm:
+          type: number
+          example: 1
+        cpuPercent:
+          type: number
+          example: 22
+
+    SdrConfigRequest:
+      type: object
+      properties:
+        centerFreqMhz:
+          type: number
+          example: 137.1
+        sampleRateHz:
+          type: integer
+          example: 2400000
+        gainDb:
+          type: number
+          example: 36.4
+        ppm:
+          type: number
+          example: 1
+
+    AntennaStatus:
+      type: object
+      required: [name, type, azimuthDeg, elevationDeg, tracking, rotatorOnline]
+      properties:
+        name:
+          type: string
+          example: VHF/UHF Yagi 7-el
+        type:
+          type: string
+          example: directional
+        azimuthDeg:
+          type: number
+          example: 142
+        elevationDeg:
+          type: number
+          example: 29
+        tracking:
+          type: boolean
+          example: true
+        rotatorOnline:
+          type: boolean
+          example: true
+
+    Antenna:
+      allOf:
+        - type: object
+          required: [id]
+          properties:
+            id:
+              type: string
+              example: ant-vhf-1
+        - $ref: "#/components/schemas/AntennaStatus"
+
+    SystemHealth:
+      type: object
+      required: [sdrCpuPercent, diskFreeGb, recordingsCount, lastObservation, uptimeHours]
+      properties:
+        sdrCpuPercent:
+          type: number
+          example: 22
+        diskFreeGb:
+          type: number
+          example: 412
+        recordingsCount:
+          type: integer
+          example: 184
+        lastObservation:
+          type: string
+          format: date-time
+        uptimeHours:
+          type: number
+          example: 168.5
+
+    RecentObservation:
+      type: object
+      required: [id, satellite, time, snrDb]
+      properties:
+        id:
+          type: string
+          example: o1
+        satellite:
+          type: string
+          example: NOAA 19
+        time:
+          type: string
+          format: date-time
+        snrDb:
+          type: number
+          example: 14.2
+
+    DashboardRecording:
+      type: object
+      required: [id, satellite, durationSec, createdAt]
+      properties:
+        id:
+          type: string
+          example: r1
+        satellite:
+          type: string
+          example: NOAA 19
+        durationSec:
+          type: integer
+          example: 540
+        createdAt:
+          type: string
+          format: date-time
+
+    OrbitSatellite:
+      type: object
+      required: [id, name, angleRad, altitudeKm]
+      properties:
+        id:
+          type: string
+          example: iss
+        name:
+          type: string
+          example: ISS
+        angleRad:
+          type: number
+          example: 0.8
+        altitudeKm:
+          type: number
+          example: 420
+
+    MissionPreview:
+      type: object
+      required: [upcomingPasses, aboveHorizon, antenna, sdr, recentObservations]
+      properties:
+        upcomingPasses:
+          type: array
+          items:
+            $ref: "#/components/schemas/Pass"
+        aboveHorizon:
+          type: array
+          items:
+            $ref: "#/components/schemas/VisibleSatellite"
+        antenna:
+          $ref: "#/components/schemas/AntennaStatus"
+        sdr:
+          $ref: "#/components/schemas/SdrStatus"
+        recentObservations:
+          type: array
+          items:
+            $ref: "#/components/schemas/RecentObservation"
+
+    DashboardData:
+      type: object
+      required:
+        [passes, visible, health, antenna, sdr, spectrumBins, recordings, orbitSatellites]
+      properties:
+        passes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Pass"
+        visible:
+          type: array
+          items:
+            $ref: "#/components/schemas/VisibleSatellite"
+        health:
+          $ref: "#/components/schemas/SystemHealth"
+        antenna:
+          $ref: "#/components/schemas/AntennaStatus"
+        sdr:
+          $ref: "#/components/schemas/SdrStatus"
+        spectrumBins:
+          type: array
+          items:
+            type: number
+            minimum: 0
+            maximum: 1
+        recordings:
+          type: array
+          items:
+            $ref: "#/components/schemas/DashboardRecording"
+        orbitSatellites:
+          type: array
+          items:
+            $ref: "#/components/schemas/OrbitSatellite"
+
+    FrequencyEntry:
+      type: object
+      required: [id, satelliteId, satelliteName, downlinkMhz, mode, bandwidthKhz]
+      properties:
+        id:
+          type: string
+          example: f1
+        satelliteId:
+          type: string
+          example: iss
+        satelliteName:
+          type: string
+          example: ISS
+        downlinkMhz:
+          type: number
+          example: 145.825
+        mode:
+          type: string
+          example: FM
+        bandwidthKhz:
+          type: number
+          example: 12.5
+
+    Transmitter:
+      type: object
+      required: [id, satelliteName, callsign, frequencyMhz, mode, powerDbm]
+      properties:
+        id:
+          type: string
+          example: t1
+        satelliteName:
+          type: string
+          example: ISS
+        callsign:
+          type: string
+          example: RS0ISS
+        frequencyMhz:
+          type: number
+          example: 145.825
+        mode:
+          type: string
+          example: FM
+        powerDbm:
+          type: number
+          example: 37
+
+    SpectrumData:
+      type: object
+      required: [centerFreqMhz, sampleRateHz, bins]
+      properties:
+        centerFreqMhz:
+          type: number
+          example: 137.1
+        sampleRateHz:
+          type: integer
+          example: 2400000
+        bins:
+          type: array
+          items:
+            type: number
+            minimum: 0
+            maximum: 1
+
+    DopplerPoint:
+      type: object
+      required: [t, hz]
+      properties:
+        t:
+          type: integer
+          example: 0
+        hz:
+          type: number
+          example: -2840
+
+    DopplerSeries:
+      type: object
+      required: [name, satelliteId, points]
+      properties:
+        name:
+          type: string
+          example: ISS (ZARYA)
+        satelliteId:
+          type: string
+          example: iss
+        points:
+          type: array
+          items:
+            $ref: "#/components/schemas/DopplerPoint"
+
+    TelemetryFrame:
+      type: object
+      required: [id, satellite, timestamp, batteryV, tempC, solarMA, rawHex]
+      properties:
+        id:
+          type: string
+          example: tf1
+        satellite:
+          type: string
+          example: FUNcube-1
+        timestamp:
+          type: string
+          format: date-time
+        batteryV:
+          type: number
+          example: 7.82
+        tempC:
+          type: number
+          example: 12.4
+        solarMA:
+          type: number
+          example: 840
+        rawHex:
+          type: string
+          example: A3F2019C4B2E
+
+    Recording:
+      type: object
+      required: [id, satellite, frequencyMhz, format, sizeMb, createdAt]
+      properties:
+        id:
+          type: string
+          example: rec1
+        satellite:
+          type: string
+          example: NOAA 19
+        frequencyMhz:
+          type: number
+          example: 137.1
+        format:
+          type: string
+          example: WAV/IQ
+        sizeMb:
+          type: number
+          example: 128
+        createdAt:
+          type: string
+          format: date-time
+
+    Observation:
+      type: object
+      required: [id, satellite, aos, maxElDeg, decoded, notes]
+      properties:
+        id:
+          type: string
+          example: obs1
+        satellite:
+          type: string
+          example: NOAA 19
+        aos:
+          type: string
+          format: date-time
+        maxElDeg:
+          type: number
+          example: 45
+        decoded:
+          type: boolean
+          example: true
+        notes:
+          type: string
+          example: APT image partial
+
+    LoginResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/AuthLoginData"
+
+    LogoutResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              nullable: true
+              example: null
+            message:
+              example: Logged out
+
+    UserResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/User"
+
+    GroundStationResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/GroundStation"
+
+    DashboardResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/DashboardData"
+
+    MissionPreviewResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/MissionPreview"
+
+    SatelliteListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/Satellite"
+
+    SatelliteResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/Satellite"
+
+    OrbitalTrackingResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/OrbitSatellite"
+
+    PassListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/Pass"
+
+    FrequencyListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/FrequencyEntry"
+
+    TransmitterListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/Transmitter"
+
+    AntennaListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/Antenna"
+
+    SdrStatusResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/SdrStatus"
+
+    SpectrumResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/SpectrumData"
+
+    SignalListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/VisibleSatellite"
+
+    DopplerResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/DopplerSeries"
+
+    TelemetryListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/TelemetryFrame"
+
+    RecordingListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/Recording"
+
+    RecordingResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/Recording"
+
+    ObservationListResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              type: array
+              items:
+                $ref: "#/components/schemas/Observation"
+
+    ObservationResponse:
+      allOf:
+        - $ref: "#/components/schemas/ApiEnvelope"
+        - type: object
+          properties:
+            data:
+              $ref: "#/components/schemas/Observation"
